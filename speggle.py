@@ -4,6 +4,7 @@ import pygame
 from datetime import datetime
 import time
 import os
+from math import sin, cos, radians
 
 ####################################################################################################
 # Constants
@@ -37,16 +38,32 @@ class Cannon(GameObject):
   BASE_Y = 0
   
   def __init__(self):
-    GameObject.__init__(self, 'img/cannon.png', SCREEN_WIDTH / 2 - 40, 0)
+    GameObject.__init__(self, 'img/cannon.png', SCREEN_WIDTH / 2, 0)
     self.base = pygame.image.load('img/cannon_base.png')
+    
+    self.width = self.sprite.get_width() / 2
+    self.height = self.sprite.get_height() / 2
     self.angle = 0
+    self.dx = 0
+    self.dy = 0
+    
+  def rot_center(self, rect, angle):
+    """rotate an image while keeping its center"""
+    rot_image = pygame.transform.rotate(self.sprite, angle)
+    rot_rect = rot_image.get_rect(center=rect.center)
+    return rot_image, rot_rect
   
   def draw_on(self, screen):
     screen.blit(self.base, (self.BASE_X, self.BASE_Y))
-    screen.blit(pygame.transform.rotate(self.sprite, self.angle), (self.x, self.y))
+    rect = self.sprite.get_rect(center=(self.x + self.dx, self.y + self.dy))
+    image, rect = self.rot_center(rect, self.angle)
+    screen.blit(image, rect)
   
   def rotate(self, d_theta):
     self.angle = (360 + (self.angle + d_theta) % 360) % 360
+    rads = radians(self.angle)
+    self.dx = (self.width + 20) * sin(rads)
+    self.dy = (self.height - 40) * cos(rads)
 
 ####################################################################################################
 # Initialization
@@ -61,6 +78,7 @@ pygame.display.set_caption("Speggle")
 
 cannon = Cannon()
 objects = [cannon]
+
 ####################################################################################################
 # Game loop
 ####################################################################################################
@@ -83,7 +101,7 @@ def tick():
     if event.type == pygame.QUIT:
       running = False
   
-  cannon.rotate(0.5)
+  cannon.rotate(1)
   
 def render():
   global objects
