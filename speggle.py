@@ -4,7 +4,7 @@ import pygame
 from datetime import datetime
 import time
 import os
-from math import sin, cos, radians
+from math import sin, cos, atan, radians, degrees
 
 ####################################################################################################
 # Constants
@@ -59,11 +59,23 @@ class Cannon(GameObject):
     image, rect = self.rot_center(rect, self.angle)
     screen.blit(image, rect)
   
-  def rotate(self, d_theta):
-    self.angle = (360 + (self.angle + d_theta) % 360) % 360
+  def set_angle(self, angle):
+    self.angle = (360 + angle % 360) % 360
     rads = radians(self.angle)
     self.dx = (self.width + 20) * sin(rads)
     self.dy = (self.height - 40) * cos(rads)
+  
+  def tick(self):
+    mouse_x, mouse_y = pygame.mouse.get_pos()
+    dx = mouse_x - self.x
+    dy = mouse_y - self.y
+    if(dy == 0):
+      if(dx < 0):
+        self.set_angle(270)
+      else:
+        self.set_angle(90)
+    else:
+      self.set_angle(degrees(atan(dx / dy)))
 
 ####################################################################################################
 # Initialization
@@ -97,11 +109,14 @@ def time_check():
 def tick():
   global running
   global cannon
+  global objects
   for event in pygame.event.get():
     if event.type == pygame.QUIT:
       running = False
   
-  cannon.rotate(1)
+  for object in objects:
+    object.tick()
+  
   
 def render():
   global objects
