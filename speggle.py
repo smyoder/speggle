@@ -4,7 +4,7 @@ import pygame
 from datetime import datetime
 import time
 import os
-from math import sin, cos, atan, radians, degrees
+from math import sin, cos, atan, acos, radians, degrees, sqrt
 
 ####################################################################################################
 # Constants
@@ -16,9 +16,7 @@ SCREEN_HEIGHT = 800
 # The acceleration (in pixels per second squared) due to gravity
 G = 1
 # The initial velocity of the ball upon being shot by the cannon (in pixels per second)
-V_0 = 20
-# The terminal velocity of the ball
-V_T = 40
+V_0 = 15
 
 ####################################################################################################
 # Helper functions
@@ -95,7 +93,16 @@ class Cannon(GameObject):
         self.set_angle(90)
     else:
       flag = False
-      self.set_angle(degrees(atan(dx/dy)))
+      if(dx < 0):
+        flag = True
+        dx = -1 * dx
+      top_term = dy - (G * dx * dx / (V_0 * V_0))
+      bottom_term = sqrt(dx * dx + dy * dy)
+      side_term = atan(dx / dy)
+      angle = (acos(top_term / bottom_term) + atan(dx / dy)) / 2
+      if(flag):
+        angle = -1 * angle
+      self.set_angle(degrees(angle))
 
 class Indicator():
   delta_t = 1
