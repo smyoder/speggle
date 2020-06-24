@@ -13,6 +13,21 @@ from math import sin, cos, atan, radians, degrees
 SCREEN_WIDTH = 800
 # The height of the screen
 SCREEN_HEIGHT = 800
+# The acceleration (in pixels per second squared) due to gravity
+G = 1
+# The initial velocity of the ball upon being shot by the cannon (in pixels per second)
+V_0 = 20
+# The terminal velocity of the ball
+V_T = 40
+
+####################################################################################################
+# Helper functions
+####################################################################################################
+def ball_pos(t, angle, cannon):
+  y = 0.5 * G * t * t + V_0 * cos(angle) * t + cannon.y
+  x = V_0 * sin(angle) * t + cannon.x
+  return x, y;
+
 
 ####################################################################################################
 # Classes
@@ -65,6 +80,10 @@ class Cannon(GameObject):
     self.dx = (self.width + 20) * sin(rads)
     self.dy = (self.height - 40) * cos(rads)
   
+  def path_to_mouse(self):
+    v_0x = V_0 * sin(radians(angle))
+    v_0y = V_0 * cos(radians(angle))
+  
   def tick(self):
     mouse_x, mouse_y = pygame.mouse.get_pos()
     dx = mouse_x - self.x
@@ -75,7 +94,25 @@ class Cannon(GameObject):
       else:
         self.set_angle(90)
     else:
-      self.set_angle(degrees(atan(dx / dy)))
+      flag = False
+      self.set_angle(degrees(atan(dx/dy)))
+
+class Indicator():
+  delta_t = 1
+  def tick(self):
+    return None
+  
+  def draw_on(self, screen):
+    global cannon
+    x = cannon.x
+    y = cannon.y
+    t = 1
+    new_x, new_y = ball_pos(t, radians(cannon.angle), cannon)
+    while((x >= 0) & (x < SCREEN_WIDTH) & (y >= 0) & (y < SCREEN_HEIGHT)):
+      pygame.draw.line(screen, (0, 255, 255), (x, y), (new_x, new_y), 5)
+      t += 1
+      x, y = new_x, new_y
+      new_x, new_y = ball_pos(t, radians(cannon.angle), cannon)
 
 ####################################################################################################
 # Initialization
@@ -89,13 +126,13 @@ screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT));
 pygame.display.set_caption("Speggle")
 
 cannon = Cannon()
-objects = [cannon]
+indicator = Indicator()
+objects = [cannon, indicator]
 
 ####################################################################################################
 # Game loop
 ####################################################################################################
 running = True;
-color = [255, 0, 0]
 
 def time_check():
   global now
