@@ -4,7 +4,7 @@ import pygame
 from datetime import datetime
 import time
 import os
-from math import sin, cos, atan, acos, radians, degrees, sqrt
+from math import pi, sin, cos, atan, acos, radians, degrees, sqrt
 
 ####################################################################################################
 # Constants
@@ -16,15 +16,16 @@ SCREEN_HEIGHT = 800
 # The acceleration (in pixels per second squared) due to gravity
 G = 1
 # The initial velocity of the ball upon being shot by the cannon (in pixels per second)
-V_0 = 15
+V_0 = 20
 
 ####################################################################################################
 # Helper functions
 ####################################################################################################
-def ball_pos(t, angle, cannon):
-  y = 0.5 * G * t * t + V_0 * cos(angle) * t + cannon.y
-  x = V_0 * sin(angle) * t + cannon.x
-  return x, y;
+def next_ball_pos(x, y, vx, vy):
+  x += vx
+  y += vy
+  vy += G
+  return x, y, vx, vy
 
 
 ####################################################################################################
@@ -78,19 +79,39 @@ class Cannon(GameObject):
     self.dx = (self.width + 20) * sin(rads)
     self.dy = (self.height - 40) * cos(rads)
   
-  def path_to_mouse(self):
-    v_0x = V_0 * sin(radians(angle))
-    v_0y = V_0 * cos(radians(angle))
+  def tick(self):
+    global indicator
+    self.set_angle(indicator.cannon_angle(self))
+
+class Indicator():
+  cannon_t = 7
+  
+  def __init__(self, cannon):
+    self.x = cannon.x
+    self.y = cannon.y
+    self.vx = 0
+    self.vy = V_0
+    self.angle = 0
+    self.cannon = cannon
+  
+  def cannon_angle(self, cannon):
+    dx = self.vx * self.cannon_t
+    dy = 0.5 * G * self.cannon_t * self.cannon_t + self.vy * self.cannon_t
+    return degrees(atan(dx / dy))
+  
+  def ball_start(self):
+    self.x = self.cannon.x
+    self.y = self.cannon.y
+    self.vx = V_0 * sin(self.angle)
+    self.vy = V_0 * cos(self.angle)
   
   def tick(self):
     mouse_x, mouse_y = pygame.mouse.get_pos()
-    dx = mouse_x - self.x
-    dy = mouse_y - self.y
+    dx = mouse_x - self.cannon.x
+    dy = mouse_y - self.cannon.y
     if(dy == 0):
-      if(dx < 0):
-        self.set_angle(270)
-      else:
-        self.set_angle(90)
+      self.ball_start()
+      return
     else:
       flag = False
       if(dx < 0):
@@ -98,28 +119,29 @@ class Cannon(GameObject):
         dx = -1 * dx
       top_term = dy - (G * dx * dx / (V_0 * V_0))
       bottom_term = sqrt(dx * dx + dy * dy)
+      ratio = top_term / bottom_term
+      if((ratio < -1) | (ratio > 1)):
+        self.ball_start()
+        return
+      
       side_term = atan(dx / dy)
-      angle = (acos(top_term / bottom_term) + atan(dx / dy)) / 2
+      angle = (acos(ratio) + atan(dx / dy)) / 2
+      if(angle > pi / 2):
+        self.ball_start()
+        return
       if(flag):
         angle = -1 * angle
-      self.set_angle(degrees(angle))
-
-class Indicator():
-  delta_t = 1
-  def tick(self):
-    return None
+      self.angle = angle
+      self.ball_start()
   
   def draw_on(self, screen):
-    global cannon
-    x = cannon.x
-    y = cannon.y
-    t = 1
-    new_x, new_y = ball_pos(t, radians(cannon.angle), cannon)
-    while((x >= 0) & (x < SCREEN_WIDTH) & (y >= 0) & (y < SCREEN_HEIGHT)):
-      pygame.draw.line(screen, (0, 255, 255), (x, y), (new_x, new_y), 5)
-      t += 1
-      x, y = new_x, new_y
-      new_x, new_y = ball_pos(t, radians(cannon.angle), cannon)
+    mouse_x, mouse_y = pygame.mouse.get_pos()
+    new_x, new_y, new_vx, new_vy = next_ball_pos(self.x, self.y, self.vx, self.vy)
+    while((new_y < mouse_y)):
+      pygame.draw.line(screen, (0, 255, 255), (self.x, self.y), (new_x, new_y), 5)
+      self.x, self.y, self.vx, self.vy = new_x, new_y, new_vx, new_vy
+      new_x, new_y, new_vx, new_vy = next_ball_pos(self.x, self.y, self.vx, self.vy)
+    pygame.draw.line(screen, (0, 255, 255), (self.x, self.y), (new_x, new_y), 5)
 
 ####################################################################################################
 # Initialization
@@ -133,8 +155,8 @@ screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT));
 pygame.display.set_caption("Speggle")
 
 cannon = Cannon()
-indicator = Indicator()
-objects = [cannon, indicator]
+indicator = Indicator(cannon)
+objects = [indicator, cannon]
 
 ####################################################################################################
 # Game loop
