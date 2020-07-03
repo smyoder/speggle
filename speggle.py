@@ -27,6 +27,14 @@ BALL_RADIUS = 16
 BALL_DIAMETER = BALL_RADIUS * 2
 # The square of the diameter of ball and pegs
 D_SQUARED = BALL_DIAMETER ** 2
+# How much velocity gets conserved after bouncing off of a peg
+PEG_ENERGY_CONSERVATION = 0.9
+# True if the game is in debug mode
+DEBUG = True
+# True if the game is paused during debug mode
+PAUSED = False
+# Set to true if in debug mode and user wants to set forward one frame
+STEP = False
 
 ####################################################################################################
 # Helper functions
@@ -40,10 +48,46 @@ def d_squared(p1, p2):
 
 # The position of the ball on the next frame given the position and velocity
 def next_ball_pos(x, y, vx, vy):
+  old_x = x
+  old_y = y
   x += vx
   y += vy
   vy += G
-  collision = collision_between((x - BALL_RADIUS, y - BALL_RADIUS), pegs)
+  collision = collision_between((x, y), pegs)
+  num_pegs = len(collision)
+  # If the ball is colliding with any pegs
+  if num_pegs > 0:
+    col_x = 0
+    col_y = 0
+    # Take the average position of those pegs and consider it as one peg
+    for peg in collision:
+      col_x += peg.x
+      col_y += peg.y
+    col_x /= num_pegs
+    col_y /= num_pegs
+    # Theta is the angle of descent from the center of the ball to the center of the peg
+    theta = atan((col_y - old_y) / (col_x - old_x))
+    # Phi is the line of reflection between the ball and the peg
+    phi = theta + pi / 2
+    v = sqrt(vx * vx + vy * vy)
+    if vx == 0:
+      v_theta = 0
+    else:
+      v_theta = atan(vy / vx)
+    attack_theta = pi / 4 - v_theta - phi
+    new_v_theta = pi - attack_theta
+    if phi % (2 * pi) < pi / 2:
+      new_v_theta -= pi / 2
+    vx = v * cos(new_v_theta)
+    vy = v * sin(new_v_theta)
+    
+    if DEBUG:
+      surface_x = 10 * cos(phi)
+      surface_y = 10 * sin(phi)
+      pygame.draw.line(screen, (255, 0, 255), (x - surface_x + BALL_RADIUS, y - surface_y + BALL_RADIUS), 
+                      (x + surface_x + BALL_RADIUS, y + surface_y + BALL_RADIUS), 5)
+      
+  
   return x, y, vx, vy, collision
 
 def collision_between(point, pegs):
@@ -53,17 +97,23 @@ def collision_between(point, pegs):
       list.append(peg)
   return list
 
+launching = False
+
 def launch_ball():
+  global launching
   objects.remove(indicator)
   cannon.set_frozen(True)
   ball.launch(SCREEN_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(indicator.angle), 
               V_0 * cos(indicator.angle));
   objects.insert(0, ball)
+  launching = True
 
 def finish_launch():
+  global launching
   objects.remove(ball)
   objects.insert(0, indicator)
   cannon.set_frozen(False)
+  launching = False
   
 
 ####################################################################################################
@@ -142,8 +192,8 @@ class Indicator():
   cannon_t = 7
   
   def __init__(self, cannon):
-    self.x = cannon.x
-    self.y = cannon.y
+    self.x = cannon.x - BALL_RADIUS
+    self.y = cannon.y - BALL_RADIUS
     self.vx = 0
     self.vy = V_0
     self.angle = 0
@@ -155,8 +205,8 @@ class Indicator():
     return degrees(atan(dx / dy))
   
   def ball_start(self):
-    self.x = self.cannon.x
-    self.y = self.cannon.y
+    self.x = self.cannon.x - BALL_RADIUS
+    self.y = self.cannon.y - BALL_RADIUS
     self.vx = V_0 * sin(self.angle)
     self.vy = V_0 * cos(self.angle)
   
@@ -192,11 +242,13 @@ class Indicator():
   def draw_on(self, screen):
     mouse_x, mouse_y = pygame.mouse.get_pos()
     new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
-    while(new_y < mouse_y) and (len(collision) == 0):
-      pygame.draw.line(screen, (0, 255, 255), (self.x, self.y), (new_x, new_y), 5)
+    while new_y < mouse_y and (len(collision) == 0 or DEBUG):
+      pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
+                      (new_x + BALL_RADIUS, new_y + BALL_RADIUS), 5)
       self.x, self.y, self.vx, self.vy = new_x, new_y, new_vx, new_vy
       new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
-    pygame.draw.line(screen, (0, 255, 255), (self.x, self.y), (new_x, new_y), 5)
+    pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
+                    (new_x + BALL_RADIUS, new_y + BALL_RADIUS), 5)
 
 class Peg(GameObject):
   BLUE = 0
@@ -226,9 +278,16 @@ class Ball(GameObject):
   
   def tick(self):
     self.x, self.y, self.vx, self.vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
-    if (len(collision) > 0 or self.x + BALL_DIAMETER < 0 or self.x > SCREEN_WIDTH or
-       self.y + BALL_DIAMETER < 0 or self.y > SCREEN_HEIGHT):
+    if (self.x + BALL_DIAMETER < 0 or self.x > SCREEN_WIDTH or self.y + BALL_DIAMETER < 0 or 
+        self.y > SCREEN_HEIGHT):
       finish_launch()
+    
+  def draw_on(self, screen):
+    GameObject.draw_on(self, screen)
+    if DEBUG:
+      next_pos = next_ball_pos(self.x, self.y, self.vx, self.vy)
+      pygame.draw.line(screen, (255, 0, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
+                      (next_pos[0] + BALL_RADIUS, next_pos[1] + BALL_RADIUS), 5)
 
 ####################################################################################################
 # Initialization
@@ -277,15 +336,22 @@ def time_check():
   return False
 
 def tick():
-  global running
+  global running, PAUSED, STEP
   for event in pygame.event.get():
     if event.type == pygame.QUIT:
       running = False
-    elif event.type == pygame.MOUSEBUTTONDOWN:
+    elif event.type == pygame.MOUSEBUTTONDOWN and not launching:
       launch_ball()
+    elif event.type == pygame.KEYUP:
+      if event.key == pygame.K_SPACE and DEBUG:
+        PAUSED = not PAUSED
+      elif event.key == pygame.K_s and DEBUG:
+        STEP = True
+        PAUSED = False
   
-  for object in objects:
-    object.tick()
+  if not PAUSED or not DEBUG:
+    for object in objects:
+      object.tick()
   
   
 def render():
@@ -299,4 +365,8 @@ now = datetime.now()
 while running:
   if time_check():
     tick()
-    render()
+    if not PAUSED or not DEBUG:
+      render()
+    if DEBUG and STEP:
+      STEP = False
+      PAUSED = True
