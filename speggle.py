@@ -3,7 +3,7 @@
 import pygame
 from datetime import datetime
 import os
-from math import pi, sin, cos, atan, acos, radians, degrees, sqrt
+from math import pi, sin, cos, atan, acos, radians, degrees, sqrt, fabs, copysign
 from PIL import Image
 
 ####################################################################################################
@@ -27,14 +27,16 @@ BALL_RADIUS = 16
 BALL_DIAMETER = BALL_RADIUS * 2
 # The square of the diameter of ball and pegs
 D_SQUARED = BALL_DIAMETER ** 2
-# How much velocity gets conserved after bouncing off of a peg
-PEG_ENERGY_CONSERVATION = 0.9
+# How much velocity gets conserved after bouncing
+ENERGY_CONSERVATION = 0.7
 # True if the game is in debug mode
 DEBUG = True
 # True if the game is paused during debug mode
 PAUSED = False
 # Set to true if in debug mode and user wants to set forward one frame
 STEP = False
+# How many frames ahead the game will calculate the ball's position during debug and zen
+FORESIGHT_DEPTH = 600
 
 ####################################################################################################
 # Helper functions
@@ -48,46 +50,78 @@ def d_squared(p1, p2):
 
 # The position of the ball on the next frame given the position and velocity
 def next_ball_pos(x, y, vx, vy):
-  old_x = x
-  old_y = y
-  x += vx
-  y += vy
-  vy += G
+  global index
+  global ceiling
   collision = collision_between((x, y), pegs)
-  num_pegs = len(collision)
+  if x < 0 :
+    wall_peg.x, wall_peg.y = 0 - BALL_DIAMETER, y
+    collision.append(wall_peg)
+  elif x + BALL_DIAMETER > SCREEN_WIDTH :
+    wall_peg.x, wall_peg.y = SCREEN_WIDTH, y
+    collision.append(wall_peg)
+  elif y < 0 and ceiling:
+    wall_peg.x, wall_peg.y = x, 0 - BALL_DIAMETER
+    collision.append(wall_peg)
+    
   # If the ball is colliding with any pegs
+  num_pegs = len(collision)
+  collided = False
   if num_pegs > 0:
+    collided = True
+    # Take the average position of those pegs and consider it as one peg
     col_x = 0
     col_y = 0
-    # Take the average position of those pegs and consider it as one peg
     for peg in collision:
       col_x += peg.x
       col_y += peg.y
     col_x /= num_pegs
     col_y /= num_pegs
+    
+    dx = col_x - x
+    dy = col_y - y
     # Theta is the angle of descent from the center of the ball to the center of the peg
-    theta = atan((col_y - old_y) / (col_x - old_x))
+    if dx == 0:
+      if dy < 0:
+        theta = 3 * pi / 2
+      else:
+        theta = pi / 2
+    else:
+      theta = atan(dy / dx)
+      
     # Phi is the line of reflection between the ball and the peg
     phi = theta + pi / 2
     v = sqrt(vx * vx + vy * vy)
     if vx == 0:
-      v_theta = 0
+      if vy < 0:
+        v_theta = 3 * pi / 2
+      else:
+        v_theta = pi / 2
     else:
       v_theta = atan(vy / vx)
-    attack_theta = pi / 4 - v_theta - phi
-    new_v_theta = pi - attack_theta
-    if phi % (2 * pi) < pi / 2:
-      new_v_theta -= pi / 2
-    vx = v * cos(new_v_theta)
-    vy = v * sin(new_v_theta)
+    v_theta = atan((sin(v_theta - phi) * sin(phi + pi / 2)) / 
+                   (sin(v_theta - phi) * cos(phi + pi / 2)))
+    vx = v * cos(v_theta) * ENERGY_CONSERVATION
+    vy = v * sin(v_theta) * ENERGY_CONSERVATION
+    nudge = BALL_DIAMETER - sqrt(dx * dx + dy * dy)
+    nudge_x = nudge * cos(v_theta)
+    nudge_y = nudge * sin(v_theta)
+    if fabs(vx + x - col_x) < fabs(dx):
+      vx *= -1
+      vy *= -1
+    nudge_x = copysign(nudge_x, vx)
+    nudge_y = copysign(nudge_y, vy)
+    x += nudge_x
+    y += nudge_y
     
     if DEBUG:
       surface_x = 10 * cos(phi)
       surface_y = 10 * sin(phi)
       pygame.draw.line(screen, (255, 0, 255), (x - surface_x + BALL_RADIUS, y - surface_y + BALL_RADIUS), 
-                      (x + surface_x + BALL_RADIUS, y + surface_y + BALL_RADIUS), 5)
-      
-  
+                    (x + surface_x + BALL_RADIUS, y + surface_y + BALL_RADIUS), 5)
+  ceiling = launching and (ceiling or collided)
+  x += vx
+  y += vy
+  vy += G
   return x, y, vx, vy, collision
 
 def collision_between(point, pegs):
@@ -98,6 +132,7 @@ def collision_between(point, pegs):
   return list
 
 launching = False
+ceiling = False
 
 def launch_ball():
   global launching
@@ -114,6 +149,7 @@ def finish_launch():
   objects.insert(0, indicator)
   cannon.set_frozen(False)
   launching = False
+  ceiling = False
   
 
 ####################################################################################################
@@ -242,13 +278,16 @@ class Indicator():
   def draw_on(self, screen):
     mouse_x, mouse_y = pygame.mouse.get_pos()
     new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
-    while new_y < mouse_y and (len(collision) == 0 or DEBUG):
+    foresight = 0
+    while new_y < mouse_y and (len(collision) == 0 or DEBUG) and foresight < FORESIGHT_DEPTH:
       pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
                       (new_x + BALL_RADIUS, new_y + BALL_RADIUS), 5)
       self.x, self.y, self.vx, self.vy = new_x, new_y, new_vx, new_vy
       new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
+      foresight += 1
     pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
                     (new_x + BALL_RADIUS, new_y + BALL_RADIUS), 5)
+    hit_pegs = []
 
 class Peg(GameObject):
   BLUE = 0
@@ -308,6 +347,8 @@ for x in range(width):
       peg = Peg(x, y, Peg.BLUE)
       objects.append(peg)
       pegs.append(peg)
+
+wall_peg = Peg(-100, -100, Peg.BLUE)
 
 os.environ['SDL_VIDEO_CENTERED'] = '1'
 pygame.init()
