@@ -50,6 +50,13 @@ MULTIPLIERS = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 5, 5, 5,
 # The color of the pixel in a peg layout specifiying the top left corner of a peg
 PEG_INDICATOR = (255, 0, 255)
 
+# How many frames to wait between deleting each peg
+PEG_DELETE_FRAMES = 5
+# The maximum amount in pixels the ball can move and be considered 'still'
+STILL_BALL = 2
+# The number of frames the ball can be still before deleting the pegs
+STILL_BALL_FRAMES = 60
+
 ####################################################################################################
 # Helper functions
 ####################################################################################################
@@ -87,6 +94,8 @@ def next_ball_pos(x, y, vx, vy):
     for peg in collision:
       col_x += peg.x
       col_y += peg.y
+      if launching and peg != wall_peg:
+        peg.hit()
     col_x /= num_pegs
     col_y /= num_pegs
     
@@ -132,7 +141,8 @@ def next_ball_pos(x, y, vx, vy):
       pygame.draw.line(screen, (255, 0, 255), (x - surface_x + BALL_RADIUS + LEFT_WIDTH, y - 
         surface_y + BALL_RADIUS), (x + surface_x + BALL_RADIUS + LEFT_WIDTH, y + surface_y + 
         BALL_RADIUS), 5)
-      message = debug_font.render('dx: %.5f | dy: %.5f | vx: %.5f | vy: %.5f' % (dx, dy, vx, vy), True, (255, 0, 255))
+      message = debug_font.render('dx: %.5f | dy: %.5f | vx: %.5f | vy: %.5f' % (dx, dy, vx, vy), 
+                                  True, (255, 0, 255))
   ceiling = launching and (ceiling or collided)
   x += vx
   y += vy
@@ -159,13 +169,26 @@ def launch_ball():
   launching = True
 
 def finish_launch():
-  global launching
-  objects.remove(ball)
+  global launching, ball_stasis
+  ball_stasis = 0
   objects.insert(0, indicator)
   cannon.set_frozen(False)
-  launching = False
   ceiling = False
-  
+
+deleting = False
+def delete_pegs():
+  global deleting, launching
+  deleting = True
+  launching = False
+  objects.remove(ball)
+
+def deleting_pegs(hit_pegs, frame_idx):
+  if frame_idx == 0:
+    if len(hit_pegs) > 0:
+      peg = hit_pegs.pop(0)
+      objects.remove(peg)
+      pegs.remove(peg)
+  return len(hit_pegs) > 0
 
 ####################################################################################################
 # Classes
@@ -315,14 +338,24 @@ class Peg(GameObject):
   PURPLE = 3
   SPRITES = [pygame.image.load("img/blue_peg.png"), pygame.image.load("img/orange_peg.png"), 
     pygame.image.load("img/green_peg.png"), pygame.image.load("img/purple_peg.png")]
+  HIT_SPRITES = [pygame.image.load("img/blue_peg_hit.png"), 
+    pygame.image.load("img/orange_peg_hit.png"), pygame.image.load("img/green_peg_hit.png"), 
+    pygame.image.load("img/purple_peg_hit.png")]
   
   def __init__(self, x, y, type):
     GameObject.__init__(self, x, y)
     self.set_type(type)
+    self.is_hit = False
   
   def set_type(self, type):
     self.sprite = self.SPRITES[type]
     self.type = type
+  
+  def hit(self):
+    if not self.is_hit:
+      self.sprite = self.HIT_SPRITES[self.type]
+      hit_pegs.append(self)
+      self.is_hit = True
 
 class Ball(GameObject):
   def __init__(self):
@@ -336,9 +369,8 @@ class Ball(GameObject):
   
   def tick(self):
     self.x, self.y, self.vx, self.vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
-    if (self.x + BALL_DIAMETER < 0 or self.x > LEVEL_WIDTH or self.y + BALL_DIAMETER < 0 or 
-        self.y > LEVEL_HEIGHT):
-      finish_launch()
+    if (self.y > LEVEL_HEIGHT):
+      delete_pegs()
     
   def draw_on(self, screen):
     GameObject.draw_on(self, screen)
@@ -359,6 +391,7 @@ class PegTracker(GameObject):
   def add_peg(self):
     self.pegs_hit += 1
     self.sprite = self.indicators[self.pegs_hit]
+        
 
 
 ####################################################################################################
@@ -376,6 +409,7 @@ print("Loading...")
 width, height = layout.size
 objects = []
 pegs = []
+hit_pegs = []
 for x in range(width):
   for y in range(height):
     color = layout.getpixel((x, y))
@@ -416,12 +450,14 @@ def time_check():
   return False
 
 step_count = 0
+ball_statis = 0
+delete_frame_idx = 0
 def tick():
-  global running, PAUSED, STEP, step_count
+  global running, PAUSED, STEP, step_count, deleting, delete_frame_idx, ball_stasis
   for event in pygame.event.get():
     if event.type == pygame.QUIT:
       running = False
-    elif event.type == pygame.MOUSEBUTTONDOWN and not launching:
+    elif event.type == pygame.MOUSEBUTTONDOWN and not (launching or deleting):
       launch_ball()
     elif event.type == pygame.KEYUP:
       if DEBUG and event.key == pygame.K_SPACE:
@@ -438,7 +474,21 @@ def tick():
   if not PAUSED or not DEBUG:
     for object in objects:
       object.tick()
-  
+    if deleting:
+      if deleting_pegs(hit_pegs, delete_frame_idx):
+        delete_frame_idx = (delete_frame_idx + 1) % PEG_DELETE_FRAMES
+      else:
+        deleting = False
+        delete_frame_idx = 0
+        if not launching:
+          finish_launch()
+    elif launching:
+      if sqrt(ball.vx * ball.vx + ball.vy * ball.vy) <= STILL_BALL:
+        ball_stasis += 1
+        if ball_stasis >= STILL_BALL_FRAMES:
+          deleting = True
+      else:
+        ball_stasis = 0
   
 def render():
   screen.blit(background, (LEFT_WIDTH, 0))
