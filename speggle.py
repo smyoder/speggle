@@ -9,34 +9,46 @@ from PIL import Image
 ####################################################################################################
 # Constants
 ####################################################################################################
-# The width of the screen
-SCREEN_WIDTH = 800
-# The height of the screen
-SCREEN_HEIGHT = 800
+# The width of the level
+LEVEL_WIDTH = 800
+# The height of the level
+LEVEL_HEIGHT = 800
+# The width of the ball home at the left of the screen
+LEFT_WIDTH = 100
+# The width of the orange peg indicator at the right of the screen
+RIGHT_WIDTH = 100
+
 # The acceleration (in pixels per second squared) due to gravity
 G = 0.4
 # The initial velocity of the ball upon being shot by the cannon (in pixels per second)
 V_0 = 10
+# How much velocity gets conserved after bouncing
+ENERGY_CONSERVATION = 0.7
 # The maximum angle the ball can be launched at in radians from straight down
 ANGLE_LIMIT = pi / 2 + 0.1
-# The color of the pixel in a peg layout specifiying the top left corner of a peg
-PEG_INDICATOR = (255, 0, 255)
+
 # The radius of the ball and pegs
 BALL_RADIUS = 16
 # The diameter of the ball and pegs
 BALL_DIAMETER = BALL_RADIUS * 2
 # The square of the diameter of ball and pegs
 D_SQUARED = BALL_DIAMETER ** 2
-# How much velocity gets conserved after bouncing
-ENERGY_CONSERVATION = 0.7
+
 # True if the game is in debug mode
-DEBUG = True
+DEBUG = False
 # True if the game is paused during debug mode
 PAUSED = False
 # Set to true if in debug mode and user wants to set forward one frame
 STEP = False
+# The number of frames to wait before holding step advances the game by one frame
+STEP_FRAMES = 10
+
 # How many frames ahead the game will calculate the ball's position during debug and zen
 FORESIGHT_DEPTH = 600
+# The point multiplier corresponding to the number of orange pegs
+MULTIPLIERS = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 5, 5, 5, 10, 10, 10, 100]
+# The color of the pixel in a peg layout specifiying the top left corner of a peg
+PEG_INDICATOR = (255, 0, 255)
 
 ####################################################################################################
 # Helper functions
@@ -48,16 +60,17 @@ def d_squared(p1, p2):
   dy = p2[1] - p1[1]
   return dx * dx + dy * dy
 
+message = None
 # The position of the ball on the next frame given the position and velocity
 def next_ball_pos(x, y, vx, vy):
-  global index
-  global ceiling
+  global index, ceiling, message
+  message = None
   collision = collision_between((x, y), pegs)
   if x < 0 :
     wall_peg.x, wall_peg.y = 0 - BALL_DIAMETER, y
     collision.append(wall_peg)
-  elif x + BALL_DIAMETER > SCREEN_WIDTH :
-    wall_peg.x, wall_peg.y = SCREEN_WIDTH, y
+  elif x + BALL_DIAMETER > LEVEL_WIDTH :
+    wall_peg.x, wall_peg.y = LEVEL_WIDTH, y
     collision.append(wall_peg)
   elif y < 0 and ceiling:
     wall_peg.x, wall_peg.y = x, 0 - BALL_DIAMETER
@@ -79,6 +92,7 @@ def next_ball_pos(x, y, vx, vy):
     
     dx = col_x - x
     dy = col_y - y
+    
     # Theta is the angle of descent from the center of the ball to the center of the peg
     if dx == 0:
       if dy < 0:
@@ -87,6 +101,14 @@ def next_ball_pos(x, y, vx, vy):
         theta = pi / 2
     else:
       theta = atan(dy / dx)
+    
+    nudge = BALL_DIAMETER - sqrt(dx * dx + dy * dy)
+    nudge_x = nudge * cos(theta)
+    nudge_y = nudge * sin(theta)
+    nudge_x = copysign(nudge_x, -1 * dx)
+    nudge_y = copysign(nudge_y, -1 * dy)
+    x += nudge_x
+    y += nudge_y
       
     # Phi is the line of reflection between the ball and the peg
     phi = theta + pi / 2
@@ -98,26 +120,19 @@ def next_ball_pos(x, y, vx, vy):
         v_theta = pi / 2
     else:
       v_theta = atan(vy / vx)
-    v_theta = atan((sin(v_theta - phi) * sin(phi + pi / 2)) / 
-                   (sin(v_theta - phi) * cos(phi + pi / 2)))
+    v_theta = 2 * theta - v_theta
+    if vx > 0:
+      v_theta += pi
     vx = v * cos(v_theta) * ENERGY_CONSERVATION
     vy = v * sin(v_theta) * ENERGY_CONSERVATION
-    nudge = BALL_DIAMETER - sqrt(dx * dx + dy * dy)
-    nudge_x = nudge * cos(v_theta)
-    nudge_y = nudge * sin(v_theta)
-    if fabs(vx + x - col_x) < fabs(dx):
-      vx *= -1
-      vy *= -1
-    nudge_x = copysign(nudge_x, vx)
-    nudge_y = copysign(nudge_y, vy)
-    x += nudge_x
-    y += nudge_y
     
     if DEBUG:
       surface_x = 10 * cos(phi)
       surface_y = 10 * sin(phi)
-      pygame.draw.line(screen, (255, 0, 255), (x - surface_x + BALL_RADIUS, y - surface_y + BALL_RADIUS), 
-                    (x + surface_x + BALL_RADIUS, y + surface_y + BALL_RADIUS), 5)
+      pygame.draw.line(screen, (255, 0, 255), (x - surface_x + BALL_RADIUS + LEFT_WIDTH, y - 
+        surface_y + BALL_RADIUS), (x + surface_x + BALL_RADIUS + LEFT_WIDTH, y + surface_y + 
+        BALL_RADIUS), 5)
+      message = debug_font.render('dx: %.5f | dy: %.5f | vx: %.5f | vy: %.5f' % (dx, dy, vx, vy), True, (255, 0, 255))
   ceiling = launching and (ceiling or collided)
   x += vx
   y += vy
@@ -138,7 +153,7 @@ def launch_ball():
   global launching
   objects.remove(indicator)
   cannon.set_frozen(True)
-  ball.launch(SCREEN_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(indicator.angle), 
+  ball.launch(LEVEL_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(indicator.angle), 
               V_0 * cos(indicator.angle));
   objects.insert(0, ball)
   launching = True
@@ -168,7 +183,7 @@ class GameObject:
   
   # Draw this object's sprite on the given screen each frame
   def draw_on(self, screen):
-    screen.blit(self.sprite, (self.x, self.y))
+    screen.blit(self.sprite, (self.x + LEFT_WIDTH, self.y))
   
   # Calculate some state about the object each frame. By default, calculate nothing
   def tick(self):
@@ -177,13 +192,13 @@ class GameObject:
 # The class for the cannon which launches the ball
 class Cannon(GameObject):
   # The x position for the base of the cannon
-  BASE_X = SCREEN_WIDTH / 2 - 125
+  BASE_X = LEVEL_WIDTH / 2 - 125
   # The y position for the base of the cannon
   BASE_Y = 0
   
   # Construct a cannon at the top of the screen facing downwards
   def __init__(self):
-    GameObject.__init__(self, SCREEN_WIDTH / 2, 0, 'img/cannon.png')
+    GameObject.__init__(self, LEVEL_WIDTH / 2, 0, 'img/cannon.png')
     self.base = pygame.image.load('img/cannon_base.png')
     
     self.width = self.sprite.get_width() / 2
@@ -204,8 +219,8 @@ class Cannon(GameObject):
   # Draw the base of the cannon and then the cannon, rotated around the base and pointed
   # where the ball will shoot
   def draw_on(self, screen):
-    screen.blit(self.base, (self.BASE_X, self.BASE_Y))
-    rect = self.sprite.get_rect(center=(self.x + self.dx, self.y + self.dy))
+    screen.blit(self.base, (self.BASE_X + LEFT_WIDTH, self.BASE_Y))
+    rect = self.sprite.get_rect(center=(self.x + self.dx + LEFT_WIDTH, self.y + self.dy))
     image, rect = self.rot_center(rect, self.angle)
     screen.blit(image, rect)
   
@@ -224,7 +239,7 @@ class Cannon(GameObject):
   def set_frozen(self, frozen):
     self.frozen = frozen
 
-class Indicator():
+class Indicator:
   cannon_t = 7
   
   def __init__(self, cannon):
@@ -248,6 +263,7 @@ class Indicator():
   
   def tick(self):
     mouse_x, mouse_y = pygame.mouse.get_pos()
+    mouse_x -= LEFT_WIDTH
     dx = mouse_x - self.cannon.x
     dy = mouse_y - self.cannon.y
     if dy == 0:
@@ -277,16 +293,19 @@ class Indicator():
   
   def draw_on(self, screen):
     mouse_x, mouse_y = pygame.mouse.get_pos()
+    mouse_x -= LEFT_WIDTH
     new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
     foresight = 0
     while new_y < mouse_y and (len(collision) == 0 or DEBUG) and foresight < FORESIGHT_DEPTH:
-      pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
-                      (new_x + BALL_RADIUS, new_y + BALL_RADIUS), 5)
+      pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS + LEFT_WIDTH, self.y + 
+        BALL_RADIUS ), (new_x + BALL_RADIUS + LEFT_WIDTH, new_y + BALL_RADIUS), 5)
+      
       self.x, self.y, self.vx, self.vy = new_x, new_y, new_vx, new_vy
       new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
       foresight += 1
-    pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
-                    (new_x + BALL_RADIUS, new_y + BALL_RADIUS), 5)
+    pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS + LEFT_WIDTH, self.y + BALL_RADIUS)
+      , (new_x + BALL_RADIUS + LEFT_WIDTH, new_y + BALL_RADIUS), 5)
+    
     hit_pegs = []
 
 class Peg(GameObject):
@@ -317,16 +336,30 @@ class Ball(GameObject):
   
   def tick(self):
     self.x, self.y, self.vx, self.vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
-    if (self.x + BALL_DIAMETER < 0 or self.x > SCREEN_WIDTH or self.y + BALL_DIAMETER < 0 or 
-        self.y > SCREEN_HEIGHT):
+    if (self.x + BALL_DIAMETER < 0 or self.x > LEVEL_WIDTH or self.y + BALL_DIAMETER < 0 or 
+        self.y > LEVEL_HEIGHT):
       finish_launch()
     
   def draw_on(self, screen):
     GameObject.draw_on(self, screen)
     if DEBUG:
       next_pos = next_ball_pos(self.x, self.y, self.vx, self.vy)
-      pygame.draw.line(screen, (255, 0, 255), (self.x + BALL_RADIUS, self.y + BALL_RADIUS), 
-                      (next_pos[0] + BALL_RADIUS, next_pos[1] + BALL_RADIUS), 5)
+      pygame.draw.line(screen, (255, 0, 255), (self.x + BALL_RADIUS + LEFT_WIDTH, self.y + 
+        BALL_RADIUS), (next_pos[0] + BALL_RADIUS + LEFT_WIDTH, next_pos[1] + BALL_RADIUS), 5)
+
+class PegTracker(GameObject):
+  def __init__(self):
+    GameObject.__init__(self, LEVEL_WIDTH, 0)
+    self.pegs_hit = 0
+    self.indicators = []
+    for i in range(26):
+      self.indicators.append(pygame.image.load('img/peg_tracker/' + str(i) + '.png'))
+    self.sprite = self.indicators[0]
+  
+  def add_peg(self):
+    self.pegs_hit += 1
+    self.sprite = self.indicators[self.pegs_hit]
+
 
 ####################################################################################################
 # Initialization
@@ -334,7 +367,10 @@ class Ball(GameObject):
 print("Enter the level name:")
 level = input()
 background = pygame.image.load('levels/' + level + '/background.png')
-layout = Image.open('levels/' + level + '/pegs.png').convert('RGB')
+layout = Image.open('levels/' + level + '/pegs.png').convert('RGB')\
+
+pygame.font.init()
+debug_font = pygame.font.Font(pygame.font.get_default_font(), 24)
 
 print("Loading...")
 width, height = layout.size
@@ -352,15 +388,18 @@ wall_peg = Peg(-100, -100, Peg.BLUE)
 
 os.environ['SDL_VIDEO_CENTERED'] = '1'
 pygame.init()
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT));
+screen = pygame.display.set_mode((LEVEL_WIDTH + LEFT_WIDTH + RIGHT_WIDTH, LEVEL_HEIGHT));
 pygame.display.set_caption("Speggle")
 
 cannon = Cannon()
 indicator = Indicator(cannon)
 ball = Ball()
+peg_tracker = PegTracker()
+ball_home = pygame.image.load('img/ball_home.png')
 
 objects.append(indicator)
 objects.append(cannon)
+objects.append(peg_tracker)
 
 ####################################################################################################
 # Game loop
@@ -376,19 +415,25 @@ def time_check():
     return True
   return False
 
+step_count = 0
 def tick():
-  global running, PAUSED, STEP
+  global running, PAUSED, STEP, step_count
   for event in pygame.event.get():
     if event.type == pygame.QUIT:
       running = False
     elif event.type == pygame.MOUSEBUTTONDOWN and not launching:
       launch_ball()
     elif event.type == pygame.KEYUP:
-      if event.key == pygame.K_SPACE and DEBUG:
+      if DEBUG and event.key == pygame.K_SPACE:
         PAUSED = not PAUSED
-      elif event.key == pygame.K_s and DEBUG:
-        STEP = True
-        PAUSED = False
+      elif DEBUG and event.key == pygame.K_s:
+        step_count = 0
+  keys = pygame.key.get_pressed()
+  if DEBUG and keys[pygame.K_s]:
+    if step_count == 0:
+      STEP = True
+      PAUSED = False
+    step_count = (step_count + 1) % STEP_FRAMES
   
   if not PAUSED or not DEBUG:
     for object in objects:
@@ -396,10 +441,12 @@ def tick():
   
   
 def render():
-  screen.blit(background, (0, 0))
+  screen.blit(background, (LEFT_WIDTH, 0))
   for object in objects:
     object.draw_on(screen)
-  
+  screen.blit(ball_home, (0, 0))
+  if DEBUG and message:
+    screen.blit(message, (LEVEL_WIDTH / 2 - message.get_width() / 2 + LEFT_WIDTH, 0))
   pygame.display.update()
 
 now = datetime.now()
