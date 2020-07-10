@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 from math import pi, sin, cos, atan, acos, radians, degrees, sqrt, fabs, copysign
 from PIL import Image
+import random
 
 ####################################################################################################
 # Constants
@@ -56,6 +57,9 @@ PEG_DELETE_FRAMES = 5
 STILL_BALL = 2
 # The number of frames the ball can be still before deleting the pegs
 STILL_BALL_FRAMES = 60
+
+# How many possible shots get checked by the zen shot
+ZEN_SHOTS = 300
 
 ####################################################################################################
 # Helper functions
@@ -158,22 +162,100 @@ def collision_between(point, pegs):
 
 launching = False
 ceiling = False
+zen_shots = 0
+
+def launch_angle(x, y):
+  dx = x - cannon.x
+  dy = y - cannon.y
+  if dy == 0:
+    return pi / -2 if dx < 0 else pi / 2
+  else:
+    flag = False
+    if dx < 0:
+      flag = True
+      dx = -1 * dx
+    top_term = dy - (G * dx * dx / (V_0 * V_0))
+    bottom_term = sqrt(dx * dx + dy * dy)
+    ratio = top_term / bottom_term
+    if ratio < -1 or ratio > 1:
+      return None
+    
+    side_term = atan(dx / dy)
+    angle = (acos(ratio) + atan(dx / dy)) / 2
+    if angle > ANGLE_LIMIT:
+      return None
+    if flag:
+      angle = -1 * angle
+    return angle
+
+def predict_shot(angle):
+  x = cannon.x - BALL_RADIUS
+  y = cannon.y - BALL_RADIUS
+  vx = V_0 * sin(angle)
+  vy = V_0 * cos(angle)
+  foresight = 0
+  points = 0
+  hit_pegs = []
+  while y < LEVEL_HEIGHT and foresight < FORESIGHT_DEPTH:
+    x, y, vx, vy, collision = next_ball_pos(x, y, vx, vy)
+    for peg in collision:
+      if hit_pegs.count(peg) == 0:
+        hit_pegs.append(peg)
+        points += peg.point_value()
+    foresight += 1
+  return points
 
 def launch_ball():
-  global launching
+  global launching, zen_shots
   objects.remove(indicator)
   cannon.set_frozen(True)
-  ball.launch(LEVEL_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(indicator.angle), 
-              V_0 * cos(indicator.angle));
   objects.insert(0, ball)
+  if zen_shots > 0:
+    zen_shots -= 1
+    max_angle = None
+    max_points = -1
+    for i in range(ZEN_SHOTS):
+      x = random.randrange(LEVEL_WIDTH)
+      y = random.randrange(LEVEL_HEIGHT)
+      angle = launch_angle(x, y)
+      if angle:
+        points = predict_shot(angle)
+        if points > max_points:
+          max_points = points
+          max_angle = angle
+    ball.launch(LEVEL_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(max_angle), 
+                V_0 * cos(max_angle));
+  else:
+    ball.launch(LEVEL_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(indicator.angle), 
+                V_0 * cos(indicator.angle));
   launching = True
+    
 
 def finish_launch():
-  global launching, ball_stasis
+  global launching, ball_stasis, purple_peg
   ball_stasis = 0
   objects.insert(0, indicator)
   cannon.set_frozen(False)
   ceiling = False
+  blue_pegs_left = False
+  num_pegs = len(pegs)
+  blue_idx = random.randrange(num_pegs)
+  blue_count = -1
+  idx = 0
+  while blue_count < blue_idx:
+    if pegs[idx].type == Peg.BLUE:
+      blue_count += 1
+      blue_pegs_left = True
+    idx += 1
+    if idx >= num_pegs:
+      if not blue_pegs_left:
+        return None
+      else:
+        idx = 0
+  purple_peg.set_type(Peg.BLUE)
+  purple_peg = pegs[idx - 1]
+  purple_peg.set_type(Peg.PURPLE)
+      
 
 deleting = False
 def delete_pegs():
@@ -286,33 +368,10 @@ class Indicator:
   
   def tick(self):
     mouse_x, mouse_y = pygame.mouse.get_pos()
-    mouse_x -= LEFT_WIDTH
-    dx = mouse_x - self.cannon.x
-    dy = mouse_y - self.cannon.y
-    if dy == 0:
-      self.ball_start()
-      return
-    else:
-      flag = False
-      if dx < 0:
-        flag = True
-        dx = -1 * dx
-      top_term = dy - (G * dx * dx / (V_0 * V_0))
-      bottom_term = sqrt(dx * dx + dy * dy)
-      ratio = top_term / bottom_term
-      if(ratio < -1) or (ratio > 1):
-        self.ball_start()
-        return
-      
-      side_term = atan(dx / dy)
-      angle = (acos(ratio) + atan(dx / dy)) / 2
-      if angle > ANGLE_LIMIT:
-        self.ball_start()
-        return
-      if flag:
-        angle = -1 * angle
+    angle = launch_angle(mouse_x - LEFT_WIDTH, mouse_y)
+    if angle:
       self.angle = angle
-      self.ball_start()
+    self.ball_start()
   
   def draw_on(self, screen):
     mouse_x, mouse_y = pygame.mouse.get_pos()
@@ -328,8 +387,6 @@ class Indicator:
       foresight += 1
     pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS + LEFT_WIDTH, self.y + BALL_RADIUS)
       , (new_x + BALL_RADIUS + LEFT_WIDTH, new_y + BALL_RADIUS), 5)
-    
-    hit_pegs = []
 
 class Peg(GameObject):
   BLUE = 0
@@ -341,6 +398,7 @@ class Peg(GameObject):
   HIT_SPRITES = [pygame.image.load("img/blue_peg_hit.png"), 
     pygame.image.load("img/orange_peg_hit.png"), pygame.image.load("img/green_peg_hit.png"), 
     pygame.image.load("img/purple_peg_hit.png")]
+  POINTS = [10, 100, 10, 500]
   
   def __init__(self, x, y, type):
     GameObject.__init__(self, x, y)
@@ -352,10 +410,18 @@ class Peg(GameObject):
     self.type = type
   
   def hit(self):
+    global zen_shots
     if not self.is_hit:
       self.sprite = self.HIT_SPRITES[self.type]
       hit_pegs.append(self)
       self.is_hit = True
+      if self.type == self.ORANGE:
+        peg_tracker.add_peg()
+      elif self.type == self.GREEN:
+        zen_shots += 1
+  
+  def point_value(self):
+    return self.POINTS[self.type]
 
 class Ball(GameObject):
   def __init__(self):
@@ -417,6 +483,26 @@ for x in range(width):
       peg = Peg(x, y, Peg.BLUE)
       objects.append(peg)
       pegs.append(peg)
+
+if not DEBUG and len(pegs) < 27:
+  raise SystemExit("There must be at least 27 pegs. Please add pegs to the level.")
+
+num_pegs = len(pegs)
+random_pegs = list(range(num_pegs))
+for i in range(num_pegs):
+  idx = random.randrange(i, num_pegs)
+  temp = random_pegs[i]
+  random_pegs[i] = random_pegs[idx]
+  random_pegs[idx] = temp
+
+for i in range(25):
+  pegs[random_pegs[i]].set_type(Peg.ORANGE)
+
+for i in range(25, 27):
+  pegs[random_pegs[i]].set_type(Peg.GREEN)
+
+purple_peg = pegs[random_pegs[27]]
+purple_peg.set_type(Peg.PURPLE)
 
 wall_peg = Peg(-100, -100, Peg.BLUE)
 
