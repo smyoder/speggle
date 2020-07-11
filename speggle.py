@@ -36,7 +36,7 @@ BALL_DIAMETER = BALL_RADIUS * 2
 D_SQUARED = BALL_DIAMETER ** 2
 
 # True if the game is in debug mode
-DEBUG = False
+DEBUG = True
 # True if the game is paused during debug mode
 PAUSED = False
 # Set to true if in debug mode and user wants to set forward one frame
@@ -147,7 +147,7 @@ def next_ball_pos(x, y, vx, vy):
         BALL_RADIUS), 5)
       message = debug_font.render('dx: %.5f | dy: %.5f | vx: %.5f | vy: %.5f' % (dx, dy, vx, vy), 
                                   True, (255, 0, 255))
-  ceiling = launching and (ceiling or collided)
+  ceiling = (launching or predicting) and (ceiling or collided)
   x += vx
   y += vy
   vy += G
@@ -188,22 +188,25 @@ def launch_angle(x, y):
       angle = -1 * angle
     return angle
 
+predicting = False
 def predict_shot(angle):
+  global predicting, ceiling
   x = cannon.x - BALL_RADIUS
   y = cannon.y - BALL_RADIUS
   vx = V_0 * sin(angle)
   vy = V_0 * cos(angle)
   foresight = 0
-  points = 0
   hit_pegs = []
+  predicting = True
   while y < LEVEL_HEIGHT and foresight < FORESIGHT_DEPTH:
     x, y, vx, vy, collision = next_ball_pos(x, y, vx, vy)
     for peg in collision:
       if hit_pegs.count(peg) == 0:
         hit_pegs.append(peg)
-        points += peg.point_value()
     foresight += 1
-  return points
+  predicting = False
+  ceiling = False
+  return len(hit_pegs)
 
 def launch_ball():
   global launching, zen_shots
@@ -213,15 +216,18 @@ def launch_ball():
   if zen_shots > 0:
     zen_shots -= 1
     max_angle = None
-    max_points = -1
+    max_pegs_hit = -1
     for i in range(ZEN_SHOTS):
-      x = random.randrange(LEVEL_WIDTH)
-      y = random.randrange(LEVEL_HEIGHT)
+      peg = pegs[random.randrange(len(pegs))]
+      x = peg.x
+      y = peg.y
+      x += random.randrange(BALL_DIAMETER) - BALL_RADIUS
+      y += random.randrange(BALL_DIAMETER) - BALL_RADIUS
       angle = launch_angle(x, y)
       if angle:
-        points = predict_shot(angle)
-        if points > max_points:
-          max_points = points
+        pegs_hit = predict_shot(angle)
+        if pegs_hit > max_pegs_hit:
+          max_pegs_hit = pegs_hit
           max_angle = angle
     ball.launch(LEVEL_WIDTH / 2 - BALL_RADIUS, 0 - BALL_RADIUS, V_0 * sin(max_angle), 
                 V_0 * cos(max_angle));
@@ -239,22 +245,24 @@ def finish_launch():
   ceiling = False
   blue_pegs_left = False
   num_pegs = len(pegs)
-  blue_idx = random.randrange(num_pegs)
-  blue_count = -1
-  idx = 0
-  while blue_count < blue_idx:
-    if pegs[idx].type == Peg.BLUE:
-      blue_count += 1
-      blue_pegs_left = True
-    idx += 1
-    if idx >= num_pegs:
-      if not blue_pegs_left:
-        return None
-      else:
-        idx = 0
-  purple_peg.set_type(Peg.BLUE)
-  purple_peg = pegs[idx - 1]
-  purple_peg.set_type(Peg.PURPLE)
+  if not DEBUG:
+    blue_idx = random.randrange(num_pegs)
+    blue_count = -1
+    idx = 0
+    while blue_count < blue_idx:
+      if pegs[idx].type == Peg.BLUE:
+        blue_count += 1
+        blue_pegs_left = True
+      idx += 1
+      if idx >= num_pegs:
+        if not blue_pegs_left:
+          return None
+        else:
+          idx = 0
+    
+    purple_peg.set_type(Peg.BLUE)
+    purple_peg = pegs[idx - 1]
+    purple_peg.set_type(Peg.PURPLE)
       
 
 deleting = False
@@ -374,17 +382,20 @@ class Indicator:
     self.ball_start()
   
   def draw_on(self, screen):
+    global predicting, ceiling
     mouse_x, mouse_y = pygame.mouse.get_pos()
     mouse_x -= LEFT_WIDTH
+    predicting = True
     new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
     foresight = 0
     while new_y < mouse_y and (len(collision) == 0 or DEBUG) and foresight < FORESIGHT_DEPTH:
       pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS + LEFT_WIDTH, self.y + 
         BALL_RADIUS ), (new_x + BALL_RADIUS + LEFT_WIDTH, new_y + BALL_RADIUS), 5)
-      
       self.x, self.y, self.vx, self.vy = new_x, new_y, new_vx, new_vy
       new_x, new_y, new_vx, new_vy, collision = next_ball_pos(self.x, self.y, self.vx, self.vy)
       foresight += 1
+    predicting = False
+    ceiling = False
     pygame.draw.line(screen, (0, 255, 255), (self.x + BALL_RADIUS + LEFT_WIDTH, self.y + BALL_RADIUS)
       , (new_x + BALL_RADIUS + LEFT_WIDTH, new_y + BALL_RADIUS), 5)
 
@@ -484,25 +495,26 @@ for x in range(width):
       objects.append(peg)
       pegs.append(peg)
 
-if not DEBUG and len(pegs) < 27:
-  raise SystemExit("There must be at least 27 pegs. Please add pegs to the level.")
+if not DEBUG:
+  if len(pegs) < 27:
+    raise SystemExit("There must be at least 27 pegs. Please add pegs to the level.")
 
-num_pegs = len(pegs)
-random_pegs = list(range(num_pegs))
-for i in range(num_pegs):
-  idx = random.randrange(i, num_pegs)
-  temp = random_pegs[i]
-  random_pegs[i] = random_pegs[idx]
-  random_pegs[idx] = temp
+  num_pegs = len(pegs)
+  random_pegs = list(range(num_pegs))
+  for i in range(num_pegs):
+    idx = random.randrange(i, num_pegs)
+    temp = random_pegs[i]
+    random_pegs[i] = random_pegs[idx]
+    random_pegs[idx] = temp
 
-for i in range(25):
-  pegs[random_pegs[i]].set_type(Peg.ORANGE)
+  for i in range(25):
+    pegs[random_pegs[i]].set_type(Peg.ORANGE)
 
-for i in range(25, 27):
-  pegs[random_pegs[i]].set_type(Peg.GREEN)
+  for i in range(25, 27):
+    pegs[random_pegs[i]].set_type(Peg.GREEN)
 
-purple_peg = pegs[random_pegs[27]]
-purple_peg.set_type(Peg.PURPLE)
+  purple_peg = pegs[random_pegs[27]]
+  purple_peg.set_type(Peg.PURPLE)
 
 wall_peg = Peg(-100, -100, Peg.BLUE)
 
@@ -544,12 +556,27 @@ def tick():
     if event.type == pygame.QUIT:
       running = False
     elif event.type == pygame.MOUSEBUTTONDOWN and not (launching or deleting):
-      launch_ball()
+      if event.button == 1:
+        launch_ball()
     elif event.type == pygame.KEYUP:
       if DEBUG and event.key == pygame.K_SPACE:
         PAUSED = not PAUSED
       elif DEBUG and event.key == pygame.K_s:
         step_count = 0
+    elif DEBUG and event.type == pygame.MOUSEBUTTONUP and event.button == 3:
+      mouse_x, mouse_y = pygame.mouse.get_pos()
+      mouse_x -= LEFT_WIDTH
+      on_peg = False
+      for peg in pegs:
+        if d_squared((mouse_x, mouse_y), (peg.x + BALL_RADIUS, peg.y + BALL_RADIUS)) < D_SQUARED:
+          on_peg = True
+          peg.set_type((peg.type + 1) % 4)
+          break
+      if not on_peg:
+        peg = Peg(mouse_x - BALL_RADIUS, mouse_y - BALL_RADIUS, Peg.BLUE)
+        pegs.append(peg)
+        objects.append(peg)
+        
   keys = pygame.key.get_pressed()
   if DEBUG and keys[pygame.K_s]:
     if step_count == 0:
